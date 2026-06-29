@@ -23,6 +23,10 @@
 *.dll
 *.so.*
 
+# Work direcotory
+debug/
+release/
+profile/
 
 # Fortran module files
 *.mod
@@ -43,20 +47,33 @@
 build/
 Build/
 build-*/
+**/build-*
 
 # CMake generated files
-CMakeFiles/
+**/CMakeLists.txt.user*
+CMakeLists.txt.user
 CMakeCache.txt
-cmake_install.cmake
+CMakeFiles/
+CMakeScripts/
+Testing/
 Makefile
+cmake_install.cmake
 install_manifest.txt
 compile_commands.json
+
+# Сборка qmake (если перешли с Qt 5)
+*.pro.user
+*.pro.user.*
+*.qmake.cache
+*.qmake.stash
 
 # Temporary files
 *.tmp
 *.log
 *.bak
 *.swp
+*.autosave
+*~
 
 # vcpkg
 vcpkg_installed/
@@ -67,3 +84,38 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Temporary files Qt
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qmlc
+*.jsc
+
+# Localization files
+*.qm
+
+# Profile
+*.log
+*.qmlproject.user*
+*.pyc
+
+# IDE settings
+*.creator.user*
+.vscode/
+.idea/
+*.zed*
+*.Zed*
+*.qtcreator*
+
+# macOS
+.DS_Store
+.Trash/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
