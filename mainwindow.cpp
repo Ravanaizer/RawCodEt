@@ -41,9 +41,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     QMenu *fileMenu = menuBar()->addMenu("File");
     QAction *openFileAction = fileMenu->addAction("Open");
+    openFileAction -> setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
     connect(openFileAction, &QAction::triggered, this, &MainWindow::onOpenFile);
-    QAction *saveFileAction = fileMenu->addAction("Save");
-    connect(saveFileAction, &QAction::triggered, this, &MainWindow::saveCode);
+    QAction *saveFileActionAs = fileMenu->addAction("Save");
+    saveFileActionAs -> setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S | Qt::SHIFT));
+    connect(saveFileActionAs, &QAction::triggered, this, &MainWindow::saveCode);
 
     resize(1200, 800);
     setWindowTitle("RawCodEt - Monaco Editor");
