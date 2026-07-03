@@ -21,12 +21,16 @@ private slots:
   void saveCode(QString filePath);
 
 private:
-//     Ui::MainWindow *ui;
+  // Ui::MainWindow *ui;
   void updateTitle();
 
   QWebEngineView *EditorSpace;
   QString currentFilePath;
   bool codeModifiedFlag = false;
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 };
 
 #endif // MAINWINDOW_H

@@ -14,8 +14,8 @@
 #include <QJsonValue>
 #include <QMenuBar>
 #include <QAction>
-
-
+#include <QMessageBox>
+#include <QCloseEvent>
 
 
 MainWindow::MainWindow(QWidget *parent)
@@ -192,6 +192,27 @@ void MainWindow::saveCode(QString filePath) {
   }
 }
 
+void MainWindow::closeEvent(QCloseEvent *event) {
+
+  if (codeModifiedFlag) {
+
+    auto result = QMessageBox::question(this, "Unsaved changes",
+                "File has unsaved changes. Save before closing?",
+                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+    if (result == QMessageBox::Save) {
+      saveCurrentCode();
+      event->accept();
+    } else if (result == QMessageBox::Discard) {
+      event->accept();
+    } else {
+      event->ignore();
+    }
+
+  } else {
+    event->accept();
+  }
+}
 
 MainWindow::~MainWindow()
 {
