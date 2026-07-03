@@ -5,22 +5,28 @@
 class QWebEngineView;
 
 class MainWindow : public QMainWindow {
-    Q_OBJECT
+  Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
-    ~MainWindow();
+  MainWindow(QWidget *parent = nullptr);
+  ~MainWindow();
 
-    QString getCode();
-    void loadFile(const QString &filepath);
+  QString getCode();
+  void loadFile(const QString &filepath);
 
 private slots:
   void onOpenFile();
-  void saveCode();
+  void saveCodeAs();
+  void saveCurrentCode();
+  void saveCode(QString filePath);
 
 private:
 //     Ui::MainWindow *ui;
-    QWebEngineView *EditorSpace;
+  void updateTitle();
+
+  QWebEngineView *EditorSpace;
+  QString currentFilePath;
+  bool codeModifiedFlag = false;
 };
 
 #endif // MAINWINDOW_H
