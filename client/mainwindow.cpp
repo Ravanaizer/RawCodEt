@@ -16,6 +16,10 @@
 #include <QAction>
 #include <QMessageBox>
 #include <QCloseEvent>
+#include <QSplitter>
+#include <QTreeWidgetItem>
+#include <QHeaderView>
+#include <QTimer>
 
 
 MainWindow::MainWindow(QWidget *parent)
@@ -24,14 +28,31 @@ MainWindow::MainWindow(QWidget *parent)
 {
     // ui->setupUi(this);
 
+    // Set splitter for tree and editor
+    QSplitter *viewSplitter = new QSplitter(Qt::Horizontal, this);
+
+    // Add file tree
+    fileTree = new QTreeWidget(this);
+    fileTree->setHeaderLabel("Files");
+    fileTree->setMinimumWidth(200);
+    updateFileTree();
+
     // Setup Editor
     EditorSpace = new QWebEngineView(this);
 
     // Check for code modified
     connect(EditorSpace->page(), &QWebEnginePage::titleChanged, this, [this](const QString &title) {
+      if (!monacoReady) return;
+
       if (title.startsWith("MODIFIED:")) {
         if (!codeModifiedFlag) {
           codeModifiedFlag = true;
+          updateTitle();
+        }
+      }
+      else if (title.startsWith("CLEAN:")) {
+        if (codeModifiedFlag) {
+          codeModifiedFlag = false;
           updateTitle();
         }
       }
@@ -46,9 +67,19 @@ MainWindow::MainWindow(QWidget *parent)
     // Set html for editor
     QString editorHtmlPath = QCoreApplication::applicationDirPath() + "/editor.html";
     EditorSpace->setUrl(QUrl::fromLocalFile(editorHtmlPath));
-    setCentralWidget(EditorSpace);
     qDebug() << "Find:" << editorHtmlPath;
     qDebug() << "File expected:" << QFile::exists(editorHtmlPath);
+
+    QTimer::singleShot(2000, this, [this]() {
+      monacoReady = true;
+      qDebug() << "Monaco ready";
+    });
+
+    // Window setup
+    viewSplitter->addWidget(fileTree);
+    viewSplitter->addWidget(EditorSpace);
+    viewSplitter->setStretchFactor(0, 1);
+    viewSplitter->setStretchFactor(1, 7);
 
     // Shortcuts
     QMenu *fileMenu = menuBar()->addMenu("File");
@@ -62,10 +93,84 @@ MainWindow::MainWindow(QWidget *parent)
     saveFileActionAs -> setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     connect(saveFileActionAs, &QAction::triggered, this, &MainWindow::saveCodeAs);
 
-
-    // Window setup
+    setCentralWidget(viewSplitter);
     resize(1920, 1080); // FHD (1280 x 720 for HD)
     setWindowTitle("RawCodEt - Monaco Editor");
+}
+
+
+void MainWindow::updateFileTree() {
+  fileTree->clear();
+
+  if (currentPath.isEmpty()) {
+    currentPath = QDir::currentPath();
+  }
+
+  loadDirectory(currentPath, nullptr);
+
+  connect(fileTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int){
+    QString filePath = item->data(0, Qt::UserRole).toString();
+    QFileInfo fileInfo(filePath);
+
+    if (filePath == "UP_DIRECTORY") {
+      QDir dir(currentPath);
+      if (dir.cdUp()) {
+        currentPath = dir.absolutePath();
+        updateFileTree();
+      }
+      return;
+    }
+
+    if (fileInfo.isFile()) {
+      loadFile(filePath);
+    }
+  });
+
+  // fileTree->expandAll();
+}
+
+
+void MainWindow::loadDirectory(const QString &path, QTreeWidgetItem *parent) {
+  QDir dir(path);
+
+  QStringList filters;
+  filters << "*.cpp" << "*.h" << "*.ui" << "*.pro" << "*.html" << "*.js" << "*.css";
+
+  if (parent == nullptr) {  // только для корневых элементов
+    QTreeWidgetItem *upItem = new QTreeWidgetItem(fileTree);
+    upItem->setText(0, "..");
+    upItem->setData(0, Qt::UserRole, "UP_DIRECTORY");
+  }
+
+  QFileInfoList fileList = dir.entryInfoList(filters, QDir::Files);
+  for (const QFileInfo &fileInfo : fileList) {
+    QTreeWidgetItem *item;
+    if (parent) {
+      item = new QTreeWidgetItem(parent);
+    } else {
+      item = new QTreeWidgetItem(fileTree);
+    }
+    item->setText(0, fileInfo.fileName());
+    item->setData(0, Qt::UserRole, fileInfo.absoluteFilePath());
+  }
+
+
+  QFileInfoList dirList = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+  for (const QFileInfo &dirInfo : dirList) {
+    if (dirInfo.fileName().startsWith(".") || dirInfo.fileName() == "build")
+      continue;
+
+    QTreeWidgetItem *dirItem;
+    if (parent) {
+      dirItem = new QTreeWidgetItem(parent);
+    } else {
+      dirItem = new QTreeWidgetItem(fileTree);
+    }
+    dirItem->setText(0, dirInfo.fileName());
+    dirItem->setData(0, Qt::UserRole, dirInfo.absoluteFilePath());
+
+    loadDirectory(dirInfo.absoluteFilePath(), dirItem);
+  }
 }
 
 
@@ -74,13 +179,16 @@ void MainWindow::onOpenFile() {
   QString filePath = QFileDialog::getOpenFileName(
     this,
     "Open file",
-    QDir::currentPath(),
+    currentPath,
     "Все файлы (*.*);;C++ файлы (*.cpp *.h *.hpp);;Python (*.py);;JavaScript (*.js);;HTML (*.html)"
   );
 
   if (!filePath.isEmpty()) {
     loadFile(filePath);
   }
+
+  currentPath = QFileInfo(filePath).absolutePath();
+  updateFileTree();
 }
 
 
@@ -98,8 +206,6 @@ void MainWindow::updateTitle()
 }
 
 
-
-
 // Load code from file
 void MainWindow::loadFile(const QString &filePath) {
   QFile file(filePath);
@@ -115,6 +221,8 @@ void MainWindow::loadFile(const QString &filePath) {
     // UTF-8 string to JSON string
     QJsonValue jsonVal(content);
     QString jsonStr = QString::fromUtf8(jsonVal.toJson(QJsonDocument::Compact));
+
+    monacoReady = false;
 
     // Set JSON string to editor
     EditorSpace->page()->runJavaScript(QString("editor.setValue(%1);").arg(jsonStr));
@@ -135,9 +243,14 @@ void MainWindow::loadFile(const QString &filePath) {
 
     codeModifiedFlag = false;
     updateTitle();
-    qDebug() << "File is open successfully:" << filePath;
-  } else {
-    qDebug() << "Error:" << filePath;
+
+    QTimer::singleShot(300, this, [this]() {
+      monacoReady = true;
+    });
+    // qDebug() << "File is open successfully:" << filePath;
+  // } else {
+  //   // qDebug() << "Error:" << filePath;
+  // }
   }
 }
 
@@ -161,7 +274,7 @@ void MainWindow::saveCodeAs() {
   QString filePath = QFileDialog::getOpenFileName(
     this,
     "Open file",
-    QDir::currentPath(),
+    currentPath,
     "Все файлы (*.*);;C++ файлы (*.cpp *.h *.hpp);;Python (*.py);;JavaScript (*.js);;HTML (*.html)"
   );
 
@@ -184,6 +297,12 @@ void MainWindow::saveCode(QString filePath) {
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
       file.write(codeText.toUtf8());
       file.close();
+
+      EditorSpace->page()->runJavaScript("window.originalContent = editor.getValue();");
+      EditorSpace->page()->runJavaScript(
+        QString("document.title = 'CLEAN:%1';").arg(QFileInfo(filePath).fileName())
+      );
+
       codeModifiedFlag = false;
       updateTitle();
     } else {

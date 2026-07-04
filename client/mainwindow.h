@@ -3,6 +3,8 @@
 
 #include <QMainWindow>
 class QWebEngineView;
+class QTreeWidget;
+class QTreeWidgetItem;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -23,10 +25,18 @@ private slots:
 private:
   // Ui::MainWindow *ui;
   void updateTitle();
+  void updateFileTree();
+  void loadDirectory(const QString &path, QTreeWidgetItem *parent = nullptr);
 
   QWebEngineView *EditorSpace;
   QString currentFilePath;
+  QString currentPath;
   bool codeModifiedFlag = false;
+  bool monacoReady = false;
+  QTreeWidget *fileTree;
+
+
+
 
 protected:
     void closeEvent(QCloseEvent *event) override;
