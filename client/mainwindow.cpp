@@ -37,6 +37,30 @@ MainWindow::MainWindow(QWidget *parent)
     fileTree->setMinimumWidth(200);
     updateFileTree();
 
+    // File tree double click options
+    connect(fileTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int){
+      QString path = item->data(0, Qt::UserRole).toString();
+      QFileInfo fileInfo(path);
+
+      if (path == "UP_DIRECTORY") {
+        QDir dir(currentPath);
+        if (dir.cdUp()) {
+          currentPath = dir.absolutePath();
+          updateFileTree();
+        }
+        return;
+      }
+
+      if (fileInfo.isFile()) {
+        loadFile(path);
+      }
+      else if (fileInfo.isDir()) {
+        currentPath = path;
+        updateFileTree();
+      }
+    });
+
+
     // Setup Editor
     EditorSpace = new QWebEngineView(this);
 
@@ -108,24 +132,6 @@ void MainWindow::updateFileTree() {
 
   loadDirectory(currentPath, nullptr);
 
-  connect(fileTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int){
-    QString filePath = item->data(0, Qt::UserRole).toString();
-    QFileInfo fileInfo(filePath);
-
-    if (filePath == "UP_DIRECTORY") {
-      QDir dir(currentPath);
-      if (dir.cdUp()) {
-        currentPath = dir.absolutePath();
-        updateFileTree();
-      }
-      return;
-    }
-
-    if (fileInfo.isFile()) {
-      loadFile(filePath);
-    }
-  });
-
   // fileTree->expandAll();
 }
 
@@ -133,16 +139,16 @@ void MainWindow::updateFileTree() {
 void MainWindow::loadDirectory(const QString &path, QTreeWidgetItem *parent) {
   QDir dir(path);
 
-  QStringList filters;
-  filters << "*.cpp" << "*.h" << "*.ui" << "*.pro" << "*.html" << "*.js" << "*.css";
+  // QStringList filters;
+  // filters << "*.cpp" << "*.h" << "*.ui" << "*.pro" << "*.html" << "*.js" << "*.css";
 
-  if (parent == nullptr) {  // только для корневых элементов
+  if (parent == nullptr && currentPath != QDir::homePath() && currentPath.startsWith(QDir::homePath())) {  // только для корневых элементов
     QTreeWidgetItem *upItem = new QTreeWidgetItem(fileTree);
     upItem->setText(0, "..");
     upItem->setData(0, Qt::UserRole, "UP_DIRECTORY");
   }
 
-  QFileInfoList fileList = dir.entryInfoList(filters, QDir::Files);
+  QFileInfoList fileList = dir.entryInfoList(QDir::Files); // or (filters, QDir::Files)
   for (const QFileInfo &fileInfo : fileList) {
     QTreeWidgetItem *item;
     if (parent) {
