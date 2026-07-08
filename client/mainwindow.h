@@ -26,7 +26,8 @@ public:
   ~MainWindow();
 
   QString getCode();
-  void loadFile(const QString &filepath);
+  void loadFile(const QString &filePath, const QString &content);
+  void loadLocalFile(const QString &filePath);
 
 private slots:
   void onOpenFile();
@@ -36,8 +37,8 @@ private slots:
   void onRemoteLoad(QString filePath);
   void onRemoteSave(QString filePath);
   void remoteGetDirs(QString path);
-  // void onReadyRead();
-  // void onCommandEntered();
+  void onReadyRead();
+  void onCommandEntered();
 
 private:
   // Ui::MainWindow *ui;
@@ -59,6 +60,10 @@ private:
   QTextEdit *console;
   QLineEdit *commandEdit;
   QWidget *consoleWidget;
+  QLineEdit *hostEdit;
+  QSpinBox *portSpin;
+  QPushButton *connBtn;
+  QMenu *connMenu;
 
   QTcpSocket *sock;
   QByteArray  buffer;
@@ -69,29 +74,3 @@ protected:
 };
 
 #endif // MAINWINDOW_H
-
-
-// #pragma once
-// #include <QMainWindow>
-// #include <QTcpSocket>
-// #include <QLineEdit>
-// #include <QTextEdit>
-// #include <QPushButton>
-//
-
-// class MainWindow : public QMainWindow {
-//     Q_OBJECT
-// public:
-//     explicit MainWindow(QWidget *parent = nullptr);
-
-// private slots:
-//     void onLoad();
-//     void onSave();
-//     void onReadyRead();
-
-// private:
-//     QLineEdit  *pathEdit_;
-//     QTextEdit  *editor_;
-//     QPushButton *loadBtn_, *saveBtn_;
-
-// };

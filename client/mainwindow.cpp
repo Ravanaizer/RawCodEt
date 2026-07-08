@@ -8,18 +8,22 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QStatusBar>
 #include <QTextStream>
 #include <QTimer>
 #include <QTreeWidgetItem>
 #include <QUrl>
+#include <QVBoxLayout>
 #include <QWebEngineSettings>
 #include <QWebEngineView>
-#include <QVBoxLayout>
+#include <QWidgetAction>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -63,22 +67,32 @@ MainWindow::MainWindow(QWidget *parent)
   // Console + input widget
   consoleWidget = new QWidget(editorSplitter);
   auto *consoleLayout = new QVBoxLayout(consoleWidget);
-  consoleLayout->setContentsMargins(0,0,0,0);
+  consoleLayout->setContentsMargins(0, 0, 0, 0);
   consoleLayout->setSpacing(1);
 
   // Console
   console = new QTextEdit(consoleWidget);
   console->setReadOnly(true);
   // console->setFont(QFont("Monospace", 10));
-  // console->setStyleSheet("QTextEdit { background-color: #1e1e1e; color: #d4d4d4; }");
+  // console->setStyleSheet("QTextEdit { background-color: #1e1e1e; color:
+  // #d4d4d4; }");
   consoleLayout->addWidget(console);
 
   // Input
   commandEdit = new QLineEdit(consoleWidget);
   // commandEdit->setFont(QFont("Monospace", 10));
-  commandEdit->setPlaceholderText("Command: ls /path, load /path, save /path");
+  commandEdit->setPlaceholderText(
+      "Command: ls/load/save /path, connect/disconnect ip");
   // commandEdit->setStyleSheet("QLineEdit { padding: 5px; }");
   consoleLayout->addWidget(commandEdit);
+
+  connect(commandEdit, &QLineEdit::returnPressed, this,
+          &MainWindow::onCommandEntered);
+
+  hostEdit = new QLineEdit("127.0.0.1");
+  portSpin = new QSpinBox;
+  portSpin->setRange(1, 65535);
+  portSpin->setValue(5000);
 
   // Window setup
   mainSplitter->addWidget(fileTree);
@@ -103,6 +117,43 @@ MainWindow::MainWindow(QWidget *parent)
   saveFileActionAs->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
   connect(saveFileActionAs, &QAction::triggered, this, &MainWindow::saveCodeAs);
 
+  // Socket
+  sock = new QTcpSocket(this);
+
+  // Button to connect
+  connBtn = new QPushButton("Connect settings");
+  // connBtn->setStyleSheet("QPushButton { color: red; font-weight: bold; }");
+  connBtn->setFlat(true);
+
+  // Pop-up menu
+  connMenu = new QMenu(this);
+
+  hostEdit = new QLineEdit("127.0.0.1");
+  hostEdit->setMinimumWidth(120);
+  portSpin = new QSpinBox;
+  portSpin->setRange(1, 65535);
+  portSpin->setValue(5000);
+
+  auto *hostLabel = new QLabel("Host:");
+  auto *portLabel = new QLabel("Port:");
+
+  auto *connWidget = new QWidget;
+  auto *connLayout = new QHBoxLayout(connWidget);
+  connLayout->addWidget(hostLabel);
+  connLayout->addWidget(hostEdit);
+  connLayout->addWidget(portLabel);
+  connLayout->addWidget(portSpin);
+
+  auto *connectAction = new QWidgetAction(connMenu);
+  connectAction->setDefaultWidget(connWidget);
+  connMenu->addAction(connectAction);
+
+  auto *connectBtnAction = new QAction("Connect", connMenu);
+  connMenu->addAction(connectBtnAction);
+
+  connBtn->setMenu(connMenu);
+  statusBar()->addPermanentWidget(connBtn);
+
   setCentralWidget(mainSplitter);
   resize(1920, 1080); // FHD (1280 x 720 for HD)
   setWindowTitle("RawCodEt - Monaco Editor");
@@ -123,7 +174,7 @@ MainWindow::MainWindow(QWidget *parent)
             }
 
             if (fileInfo.isFile()) {
-              loadFile(path);
+              loadLocalFile(path);
             } else if (fileInfo.isDir()) {
               currentPath = path;
               updateFileTree();
@@ -148,6 +199,20 @@ MainWindow::MainWindow(QWidget *parent)
               }
             }
           });
+
+  // Connect to host
+  connect(sock, &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
+  connect(sock, &QTcpSocket::connected, this,
+          [this]() { console->append("Connected"); });
+  connect(sock, &QTcpSocket::disconnected, this,
+          [this]() { console->append("Disconnected"); });
+  connect(connectBtnAction, &QAction::triggered, this, [this]() {
+    QString host = hostEdit->text();
+    quint16 port = portSpin->value();
+    console->append("Connecting to " + host + ":" + QString::number(port) +
+                    "...");
+    sock->connectToHost(host, port);
+  });
 }
 
 void MainWindow::updateFileTree() {
@@ -207,21 +272,6 @@ void MainWindow::loadDirectory(const QString &path, QTreeWidgetItem *parent) {
   }
 }
 
-// Select file for open and load
-void MainWindow::onOpenFile() {
-  QString filePath = QFileDialog::getOpenFileName(
-      this, "Open file", currentPath,
-      "Все файлы (*.*);;C++ файлы (*.cpp *.h *.hpp);;Python "
-      "(*.py);;JavaScript(*.js);; HTML(*.html)");
-
-  if (!filePath.isEmpty()) {
-    loadFile(filePath);
-  }
-
-  currentPath = QFileInfo(filePath).absolutePath();
-  updateFileTree();
-}
-
 // Set title text
 void MainWindow::updateTitle() {
   QString title = "RawCodEt";
@@ -234,63 +284,66 @@ void MainWindow::updateTitle() {
   setWindowTitle(title);
 }
 
-// Load code from file
-void MainWindow::loadFile(const QString &filePath) {
+// Select file for open and load
+void MainWindow::onOpenFile() {
+  QString filePath = QFileDialog::getOpenFileName(
+      this, "Open file", currentPath,
+      "Все файлы (*.*);;C++ файлы (*.cpp *.h *.hpp);;Python "
+      "(*.py);;JavaScript(*.js);; HTML(*.html)");
+
+  if (!filePath.isEmpty()) {
+    loadLocalFile(filePath);
+  }
+
+  currentPath = QFileInfo(filePath).absolutePath();
+  updateFileTree();
+}
+
+void MainWindow::loadLocalFile(const QString &filePath) {
   QFile file(filePath);
 
+  QString base64Content = "";
+
   if (file.open(QIODevice::ReadOnly)) {
-    // Get byte array from file and close file
     QByteArray rawData = file.readAll();
     file.close();
 
-    // Byte array to UTF-8 string
-    QString content = QString::fromUtf8(rawData);
-
-    // UTF-8 string to JSON string
-    QJsonValue jsonVal(content);
-    QString jsonStr = QString::fromUtf8(jsonVal.toJson(QJsonDocument::Compact));
-
-    monacoReady = false;
-
-    // Set JSON string to editor
-    runJS(QString("editor.setValue(%1);").arg(jsonStr));
-
-    // Select syntax highlighting
-    QString lang = "cpp";
-    if (filePath.endsWith(".py"))
-      lang = "python";
-    else if (filePath.endsWith(".js"))
-      lang = "javascript";
-    else if (filePath.endsWith(".html"))
-      lang = "html";
-
-    runJS(QString("monaco.editor.setModelLanguage(editor.getModel(),'%1');")
-              .arg(lang));
-
-    runJS(QString("window.currentFileName ='%1';")
-              .arg(QFileInfo(filePath).fileName()));
-
-    runJS("window.setupChangeHandler();");
-
-    currentFilePath = filePath;
-
-    codeModifiedFlag = false;
-    updateTitle();
-
-    QTimer::singleShot(300, this, [this]() { monacoReady = true; });
-    // qDebug() << "File is open successfully:" << filePath;
-    // } else {
-    //   // qDebug() << "Error:" << filePath;
-    // }
+    QString base64Content = rawData.toBase64();
   }
+
+  loadFile(filePath, base64Content);
+}
+
+// Load code from file
+void MainWindow::loadFile(const QString &filePath, const QString &content) {
+  QString base64Content = content.toUtf8().toBase64();
+  runJS(QString("editor.setValue(atob('%1'));").arg(base64Content));
+
+  QString lang = "cpp";
+  if (filePath.endsWith(".py"))
+    lang = "python";
+  else if (filePath.endsWith(".js"))
+    lang = "javascript";
+  else if (filePath.endsWith(".html"))
+    lang = "html";
+
+  runJS(QString("monaco.editor.setModelLanguage(editor.getModel(),'%1');")
+            .arg(lang));
+  runJS(QString("window.currentFileName ='%1';")
+            .arg(QFileInfo(filePath).fileName()));
+  runJS("window.setupChangeHandler();");
+
+  currentFilePath = filePath;
+  codeModifiedFlag = false;
+  updateTitle();
 }
 
 // Get current codee from Editor
 QString MainWindow::getCode() {
   QString code;
   QEventLoop loop;
-  runJS("editor.getValue();", [&code, &loop](const QVariant &result) {
-    code = result.toString();
+  runJS("btoa(editor.getValue());", [&code, &loop](const QVariant &result) {
+    code = QByteArray::fromBase64(result.toString().toUtf8());
     loop.quit();
   });
   loop.exec();
@@ -383,71 +436,125 @@ void MainWindow::onRemoteSave(QString filePath) {
 void MainWindow::remoteGetDirs(QString path) {
   Message msg;
   msg.flag = "ls";
-  msg.payload["directory"] = path;
+  msg.payload["path"] = path;
   send(msg);
 }
 
 void MainWindow::send(const Message &msg) {
   if (sock->state() != QAbstractSocket::ConnectedState) {
-    QMessageBox::warning(this, "Ошибка", "Нет соединения с сервером");
+    QMessageBox::warning(this, "Error", "Not connect to server");
     return;
   }
   sock->write(msg.serialize());
 }
 
-// void MainWindow::onReadyRead() {
-//   buffer_.append(sock_->readAll());
+void MainWindow::onReadyRead() {
+  buffer.append(sock->readAll());
 
-//   Message msg;
-//   while (Message::tryDeserialize(buffer_, msg)) {
-//     if (msg.flag == "output") {
-//       if (msg.payload["ok"].toBool()) {
-//         if (msg.payload.contains("content"))
-//           editor_->setPlainText(msg.payload["content"].toString());
-//         else
-//           statusBar()->showMessage("Сохранено", 2000);
-//       }
-//     } else if (msg.flag == "error") {
-//       QMessageBox::critical(this, "Ошибка сервера",
-//                             msg.payload["message"].toString());
-//     }
-//   }
-// }
+  Message msg;
+  while (Message::tryDeserialize(buffer, msg)) {
+    if (msg.flag == "load") {
+      if (msg.payload["ok"].toBool()) {
+        QString remotePath = msg.payload["path"].toString();
+        QString fileName = QFileInfo(remotePath).fileName();
+
+        // if (fileName.isEmpty() || fileName == "." || fileName == ".." || fileName.contains("/")) {
+        //     console->append("Invalid file name from server");
+        //     return;
+        // }
+
+        QString safePath = currentPath + "/" + fileName;
+
+        loadFile(safePath, msg.payload["content"].toString());
+      }
+    } else if (msg.flag == "save") {
+      console->append("File saved: " + msg.payload["path"].toString());
+    } else if (msg.flag == "ls") {
+      console->append(msg.payload["content"].toString());
+    } else if (msg.flag == "error") {
+      QMessageBox::critical(this, "Server fail",
+                            msg.payload["message"].toString());
+    }
+  }
+}
+
+void MainWindow::onCommandEntered() {
+  QString cmd = commandEdit->text().trimmed();
+  if (cmd.isEmpty())
+    return;
+
+  console->append(cmd.toHtmlEscaped());
+
+  QStringList parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+  QString command = parts[0].toLower();
+
+  Message msg;
+
+  if (command == "ls" && parts.size() >= 2) {
+    msg.flag = "ls";
+    if (parts.size() >= 2) {
+      msg.payload["path"] = parts[1];
+    } else {
+      msg.payload["path"] = ".";
+    }
+  } else if (command == "load" && parts.size() >= 2) {
+    msg.flag = "load";
+    msg.payload["path"] = parts[1];
+  } else if (command == "save" && parts.size() >= 2) {
+    msg.flag = "save";
+    msg.payload["path"] = parts[1];
+    msg.payload["content"] = getCode();
+    commandEdit->clear();
+  } else if (command == "connect") {
+    if (sock->state() == QAbstractSocket::ConnectedState) {
+      console->append("Already connected");
+      commandEdit->clear();
+      return;
+    }
+
+    QString host;
+    quint16 port;
+
+    if (parts.size() >= 2) {
+      QString addr = parts[1];
+      if (addr.contains(":")) {
+        QStringList addrParts = addr.split(":");
+        host = addrParts[0];
+        port = addrParts[1].toUShort();
+      } else if (parts.size() >= 3) {
+        host = parts[1];
+        port = parts[2].toUShort();
+      } else {
+        console->append("Format: connect [host:port] or connect host port");
+        commandEdit->clear();
+        return;
+      }
+
+      hostEdit->setText(host);
+      portSpin->setValue(port);
+    } else {
+      host = hostEdit->text();
+      port = portSpin->value();
+    }
+
+    console->append("Connecting to " + host + ":" + QString::number(port) +
+                    "...");
+    sock->connectToHost(host, port);
+  } else {
+    // console->append(command.toHtmlEscaped());
+    commandEdit->clear();
+    return;
+  }
+
+  if (sock && sock->state() == QAbstractSocket::ConnectedState) {
+    sock->write(msg.serialize());
+  } else {
+    console->append("Server fail");
+  }
+
+  commandEdit->clear();
+}
 
 MainWindow::~MainWindow() {
   // delete ui;
 }
-
-// #include "mainwindow.h"
-// #include <QHBoxLayout>
-// #include <QMessageBox>
-// #include <QStatusBar>
-// #include <QVBoxLayout>
-
-// MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
-//   auto *central = new QWidget(this);
-//   setCentralWidget(central);
-
-//   pathEdit_ = new QLineEdit("/tmp/test.txt");
-//   loadBtn_ = new QPushButton("Загрузить");
-//   saveBtn_ = new QPushButton("Сохранить");
-//   editor_ = new QTextEdit;
-
-//   auto *top = new QHBoxLayout;
-//   top->addWidget(pathEdit_);
-//   top->addWidget(loadBtn_);
-//   top->addWidget(saveBtn_);
-
-//   auto *layout = new QVBoxLayout(central);
-//   layout->addLayout(top);
-//   layout->addWidget(editor_);
-
-//   resize(600, 400);
-
-//   connect(loadBtn_, &QPushButton::clicked, this, &MainWindow::onLoad);
-//   connect(saveBtn_, &QPushButton::clicked, this, &MainWindow::onSave);
-
-//   sock_ = new QTcpSocket(this);
-//   connect(sock_, &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
-//   sock_->connectToHost("127.0.0.1", 5000);
-// }

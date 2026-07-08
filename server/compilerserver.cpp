@@ -29,16 +29,17 @@ void CompilerServer::onReadyRead() {
 }
 
 void CompilerServer::handle(QTcpSocket *sock, const Message &msg) {
-  // qDebug() << "Got flag:" << msg.flag;
+  qDebug() << "Got flag:" << msg.flag;
   Message reply;
 
   if (msg.flag == "load") {
     QString path = msg.payload["path"].toString();
     QFile f(path);
     if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-      reply.flag = "output";
+      reply.flag = "load";
       reply.payload["ok"] = true;
       reply.payload["content"] = QString::fromUtf8(f.readAll());
+      reply.payload["path"] = path;
     } else {
       reply.flag = "error";
       reply.payload["message"] = f.errorString();
@@ -51,8 +52,9 @@ void CompilerServer::handle(QTcpSocket *sock, const Message &msg) {
     QFile f(path);
     if (f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
       f.write(content.toUtf8());
-      reply.flag = "output";
+      reply.flag = "save";
       reply.payload["ok"] = true;
+      reply.payload["path"] = path;
     } else {
       reply.flag = "error";
       reply.payload["message"] = f.errorString();
@@ -60,7 +62,7 @@ void CompilerServer::handle(QTcpSocket *sock, const Message &msg) {
     send(sock, reply);
 
   } else if (msg.flag == "ls") {
-    QDir directory(msg.payload["directory"].toString());
+    QDir directory(msg.payload["path"].toString());
 
     if (!directory.exists()) {
       Message reply;
@@ -83,7 +85,7 @@ void CompilerServer::handle(QTcpSocket *sock, const Message &msg) {
     }
 
     Message reply;
-    reply.flag = "output";
+    reply.flag = "ls";
     reply.payload["ok"] = true;
     reply.payload["content"] = names.join(" ");
     send(sock, reply);
