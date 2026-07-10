@@ -302,16 +302,16 @@ void MainWindow::onOpenFile() {
 void MainWindow::loadLocalFile(const QString &filePath) {
   QFile file(filePath);
 
-  QString base64Content = "";
+  QString content = "";
 
   if (file.open(QIODevice::ReadOnly)) {
     QByteArray rawData = file.readAll();
     file.close();
 
-    QString base64Content = rawData.toBase64();
+    content = QString::fromUtf8(rawData);
   }
 
-  loadFile(filePath, base64Content);
+  loadFile(filePath, content);
 }
 
 // Load code from file
@@ -458,7 +458,8 @@ void MainWindow::onReadyRead() {
         QString remotePath = msg.payload["path"].toString();
         QString fileName = QFileInfo(remotePath).fileName();
 
-        // if (fileName.isEmpty() || fileName == "." || fileName == ".." || fileName.contains("/")) {
+        // if (fileName.isEmpty() || fileName == "." || fileName == ".." ||
+        // fileName.contains("/")) {
         //     console->append("Invalid file name from server");
         //     return;
         // }
@@ -506,6 +507,7 @@ void MainWindow::onCommandEntered() {
     msg.payload["content"] = getCode();
     commandEdit->clear();
   } else if (command == "connect") {
+
     if (sock->state() == QAbstractSocket::ConnectedState) {
       console->append("Already connected");
       commandEdit->clear();
@@ -540,6 +542,20 @@ void MainWindow::onCommandEntered() {
     console->append("Connecting to " + host + ":" + QString::number(port) +
                     "...");
     sock->connectToHost(host, port);
+    commandEdit->clear();
+    return;
+
+  } else if (command == "disconnect") {
+    console->append("Disconnecting...");
+    if (sock->state() != QAbstractSocket::ConnectedState) {
+      console->append("Already disconnected");
+      commandEdit->clear();
+      return;
+    }
+    sock->disconnectFromHost();
+    commandEdit->clear();
+    return;
+
   } else {
     // console->append(command.toHtmlEscaped());
     commandEdit->clear();
