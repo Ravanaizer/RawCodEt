@@ -125,9 +125,10 @@ MainWindow::MainWindow(QWidget *parent)
   // connBtn->setStyleSheet("QPushButton { color: red; font-weight: bold; }");
   connBtn->setFlat(true);
 
-  // Pop-up menu
+  // Pop-up menu for connect settings
   connMenu = new QMenu(this);
 
+  // Host and port settings
   hostEdit = new QLineEdit("127.0.0.1");
   hostEdit->setMinimumWidth(120);
   portSpin = new QSpinBox;
@@ -137,6 +138,7 @@ MainWindow::MainWindow(QWidget *parent)
   auto *hostLabel = new QLabel("Host:");
   auto *portLabel = new QLabel("Port:");
 
+  // Connect settings layout
   auto *connWidget = new QWidget;
   auto *connLayout = new QHBoxLayout(connWidget);
   connLayout->addWidget(hostLabel);
@@ -148,12 +150,27 @@ MainWindow::MainWindow(QWidget *parent)
   connectAction->setDefaultWidget(connWidget);
   connMenu->addAction(connectAction);
 
+  // Connect Button
   auto *connectBtnAction = new QAction("Connect", connMenu);
   connMenu->addAction(connectBtnAction);
 
   connBtn->setMenu(connMenu);
   statusBar()->addPermanentWidget(connBtn);
 
+  // Create shell in project with current path
+  shellProcess = new QProcess;
+  shellProcess->setProcessChannelMode(
+      QProcess::MergedChannels); // stderr + stdout
+  shellProcess->setWorkingDirectory(currentPath);
+
+// Select powershell or bash (match system)
+#ifdef Q_OS_WIN
+  shellProcess->start("powershell", QStringList());
+#else
+  shellProcess->start("bash", QStringList{"--norc", "--noprofile"});
+#endif
+
+  // Editor screen settings
   setCentralWidget(mainSplitter);
   resize(1920, 1080); // FHD (1280 x 720 for HD)
   setWindowTitle("RawCodEt - Monaco Editor");
@@ -213,8 +230,23 @@ MainWindow::MainWindow(QWidget *parent)
                     "...");
     sock->connectToHost(host, port);
   });
+
+  connect(shellProcess, &QProcess::readyReadStandardOutput, this, [this]() {
+    console->insertPlainText(
+        QString::fromUtf8(shellProcess->readAllStandardOutput()));
+    QTextCursor c = console->textCursor();
+    c.movePosition(QTextCursor::End);
+    console->setTextCursor(c);
+  });
+
+  connect(shellProcess,
+          QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+          [this](int, QProcess::ExitStatus) {
+            console->append("\n[Shell terminated]");
+          });
 }
 
+// Update file tree in sidebar
 void MainWindow::updateFileTree() {
   fileTree->clear();
 
@@ -227,6 +259,7 @@ void MainWindow::updateFileTree() {
   // fileTree->expandAll();
 }
 
+// Load directori from path
 void MainWindow::loadDirectory(const QString &path, QTreeWidgetItem *parent) {
   QDir dir(path);
 
@@ -385,28 +418,6 @@ void MainWindow::saveCode(QString filePath) {
   }
 }
 
-void MainWindow::closeEvent(QCloseEvent *event) {
-
-  if (codeModifiedFlag) {
-
-    auto result = QMessageBox::question(
-        this, "Unsaved changes",
-        "File has unsaved changes. Save before closing?",
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-
-    if (result == QMessageBox::Save) {
-      saveCurrentCode();
-      event->accept();
-    } else if (result == QMessageBox::Discard) {
-      event->accept();
-    } else {
-      event->ignore();
-    }
-
-  } else {
-    event->accept();
-  }
-}
 
 void MainWindow::runJS(const QString &js,
                        std::function<void(const QVariant &)> callback) {
@@ -480,34 +491,53 @@ void MainWindow::onReadyRead() {
 }
 
 void MainWindow::onCommandEntered() {
-  QString cmd = commandEdit->text().trimmed();
-  if (cmd.isEmpty())
+  QString cmd = commandEdit->text();
+  if (cmd.trimmed().isEmpty())
     return;
+  commandEdit->clear();
 
-  console->append(cmd.toHtmlEscaped());
+  // network command with /
+  if (cmd.startsWith("/")) {
+    QString netCmd = cmd.mid(1).trimmed();
+    handleNetworkCommand(netCmd);
+    return;
+  }
+
+  if (shellProcess && shellProcess->state() == QProcess::Running) {
+    console->insertPlainText("$ " + cmd + "\n");
+    shellProcess->write(cmd.toUtf8() + "\n");
+  } else {
+    console->append("[Shell not running]");
+  }
+}
+
+void MainWindow::handleNetworkCommand(const QString &cmd) {
+  console->append("/" + cmd.toHtmlEscaped());
 
   QStringList parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+  if (parts.isEmpty())
+    return;
   QString command = parts[0].toLower();
-
   Message msg;
+  bool sendMsg = false;
 
   if (command == "ls" && parts.size() >= 2) {
     msg.flag = "ls";
-    if (parts.size() >= 2) {
-      msg.payload["path"] = parts[1];
-    } else {
-      msg.payload["path"] = ".";
-    }
+    msg.payload["path"] = parts[1];
+    sendMsg = true;
+
   } else if (command == "load" && parts.size() >= 2) {
     msg.flag = "load";
     msg.payload["path"] = parts[1];
+    sendMsg = true;
+
   } else if (command == "save" && parts.size() >= 2) {
     msg.flag = "save";
     msg.payload["path"] = parts[1];
     msg.payload["content"] = getCode();
-    commandEdit->clear();
-  } else if (command == "connect") {
+    sendMsg = true;
 
+  } else if (command == "connect") {
     if (sock->state() == QAbstractSocket::ConnectedState) {
       console->append("Already connected");
       commandEdit->clear();
@@ -557,18 +587,44 @@ void MainWindow::onCommandEntered() {
     return;
 
   } else {
-    // console->append(command.toHtmlEscaped());
-    commandEdit->clear();
+    console->append("Unknown network command: " + command);
     return;
   }
 
-  if (sock && sock->state() == QAbstractSocket::ConnectedState) {
-    sock->write(msg.serialize());
-  } else {
-    console->append("Server fail");
+  if (sendMsg) {
+    if (sock && sock->state() == QAbstractSocket::ConnectedState) {
+      sock->write(msg.serialize());
+    } else {
+      console->append("Not connected to server");
+    }
+  }
+}
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+  if (shellProcess && shellProcess->state() == QProcess::Running) {
+    shellProcess->terminate();
+    shellProcess->waitForFinished(1000);
   }
 
-  commandEdit->clear();
+  if (codeModifiedFlag) {
+
+    auto result = QMessageBox::question(
+        this, "Unsaved changes",
+        "File has unsaved changes. Save before closing?",
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+    if (result == QMessageBox::Save) {
+      saveCurrentCode();
+      event->accept();
+    } else if (result == QMessageBox::Discard) {
+      event->accept();
+    } else {
+      event->ignore();
+    }
+
+  } else {
+    event->accept();
+  }
 }
 
 MainWindow::~MainWindow() {
