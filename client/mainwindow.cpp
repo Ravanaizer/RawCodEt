@@ -1,30 +1,27 @@
 #include "mainwindow.h"
-// #include "ui_mainwindow.h"
 
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
-// , ui(new Ui::MainWindow)
-{
-  // ui->setupUi(this);
+MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   setupUI();
   setupConnects();
 }
 
 void MainWindow::setupUI() {
-  // Set splitter for tree and editor
+  // --- Main Layout & Splitters ---
+  // Horizontal splitter: [File Tree] | [Editor + Console]
   m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+  // Vertical splitter for the right side: [Editor] / [Console]
   m_editorSplitter = new QSplitter(Qt::Vertical, m_mainSplitter);
 
-  // Add file tree
+  // --- File Tree (Sidebar) ---
   m_fileTree = new QTreeWidget(m_mainSplitter);
   m_fileTree->setHeaderLabel("Files");
   m_fileTree->setMinimumWidth(200);
   updateFileTree();
 
-  // Setup Editor
+  // --- Monaco Editor (WebEngine) ---
   m_EditorSpace = new QWebEngineView(m_editorSplitter);
 
-  // Settings for editor
+  // Configure WebEngine settings for local file access and JS
   QWebEngineSettings *settings = m_EditorSpace->settings();
   settings->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls,
                          true);
@@ -32,83 +29,53 @@ void MainWindow::setupUI() {
                          true);
   settings->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
 
-  // Set html for editor
+  // Load the HTML file that initializes Monaco Editor
   QString editorHtmlPath =
       QCoreApplication::applicationDirPath() + "/editor.html";
   m_EditorSpace->setUrl(QUrl::fromLocalFile(editorHtmlPath));
   qDebug() << "Find:" << editorHtmlPath;
   qDebug() << "File expected:" << QFile::exists(editorHtmlPath);
 
+  // Delay setting the "ready" flag to allow Monaco to initialize
   QTimer::singleShot(2000, this, [this]() {
     m_monacoReady = true;
     qDebug() << "Monaco ready";
   });
 
-  // Console + input widget
+  // --- Console & Command Input ---
   m_consoleWidget = new QWidget(m_editorSplitter);
   auto *m_consoleLayout = new QVBoxLayout(m_consoleWidget);
   m_consoleLayout->setContentsMargins(0, 0, 0, 0);
   m_consoleLayout->setSpacing(1);
 
-  // Console
+  // Read-only console for output (shell & network)
   m_console = new QTextEdit(m_consoleWidget);
   m_console->setReadOnly(true);
-  // m_console->setFont(QFont("Monospace", 10));
-  // m_console->setStyleSheet("QTextEdit { background-color: #1e1e1e; color:
-  // #d4d4d4; }");
   m_consoleLayout->addWidget(m_console);
 
-  // Input
+  // Command line input
   m_commandEdit = new QLineEdit(m_consoleWidget);
-  // m_commandEdit->setFont(QFont("Monospace", 10));
   m_commandEdit->setPlaceholderText(
       "Command: ls/load/save /path, connect/disconnect ip");
-  // m_commandEdit->setStyleSheet("QLineEdit { padding: 5px; }");
   m_consoleLayout->addWidget(m_commandEdit);
-
   connect(m_commandEdit, &QLineEdit::returnPressed, this,
           &MainWindow::onCommandEntered);
 
+  // --- Network Connection UI (Status Bar) ---
   m_hostEdit = new QLineEdit("127.0.0.1");
   m_portSpin = new QSpinBox;
   m_portSpin->setRange(1, 65535);
   m_portSpin->setValue(5000);
 
-  // Window setup
-  m_mainSplitter->addWidget(m_fileTree);
-  m_mainSplitter->addWidget(m_editorSplitter);
-  m_mainSplitter->setStretchFactor(0, 0.5);
-  m_mainSplitter->setStretchFactor(1, 9.5);
-  m_editorSplitter->addWidget(m_EditorSpace);
-  m_editorSplitter->addWidget(m_consoleWidget);
-  m_editorSplitter->setStretchFactor(0, 8);
-  m_editorSplitter->setStretchFactor(1, 0.1);
-
-  // Shortcuts
-  QMenu *fileMenu = menuBar()->addMenu("File");
-  QAction *openFileAction = fileMenu->addAction("Open");
-  openFileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
-  connect(openFileAction, &QAction::triggered, this, &MainWindow::onOpenFile);
-  QAction *saveFileAction = fileMenu->addAction("Save");
-  saveFileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
-  connect(saveFileAction, &QAction::triggered, this,
-          &MainWindow::saveCurrentCode);
-  QAction *saveFileActionAs = fileMenu->addAction("Save as");
-  saveFileActionAs->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-  connect(saveFileActionAs, &QAction::triggered, this, &MainWindow::saveCodeAs);
-
-  // Socket
+  // Socket initialization
   m_sock = new QTcpSocket(this);
 
-  // Button to connect
+  // Pop-up menu for connection settings
   m_connBtn = new QPushButton("Connect settings");
-  // m_connBtn->setStyleSheet("QPushButton { color: red; font-weight: bold; }");
   m_connBtn->setFlat(true);
-
-  // Pop-up menu for connect settings
   m_connMenu = new QMenu(this);
 
-  // Host and port settings
+  // Recreate host/port widgets specifically for the menu layout
   m_hostEdit = new QLineEdit("127.0.0.1");
   m_hostEdit->setMinimumWidth(120);
   m_portSpin = new QSpinBox;
@@ -118,7 +85,6 @@ void MainWindow::setupUI() {
   auto *hostLabel = new QLabel("Host:");
   auto *portLabel = new QLabel("Port:");
 
-  // Connect settings layout
   auto *connWidget = new QWidget;
   auto *connLayout = new QHBoxLayout(connWidget);
   connLayout->addWidget(hostLabel);
@@ -130,39 +96,65 @@ void MainWindow::setupUI() {
   connectAction->setDefaultWidget(connWidget);
   m_connMenu->addAction(connectAction);
 
-  // Connect Button
+  // Connect button inside the menu
   m_connectBtnAction = new QAction("Connect", m_connMenu);
   m_connMenu->addAction(m_connectBtnAction);
-
   m_connBtn->setMenu(m_connMenu);
   statusBar()->addPermanentWidget(m_connBtn);
 
-  // Create shell in project with current path
+  // --- Local Shell Process ---
   m_shellProcess = new QProcess;
   m_shellProcess->setProcessChannelMode(
-      QProcess::MergedChannels); // stderr + stdout
+      QProcess::MergedChannels); // Merge stderr and stdout
   m_shellProcess->setWorkingDirectory(m_currentPath);
 
-// Select powershell or bash (match system)
+  // Start appropriate shell based on OS
 #ifdef Q_OS_WIN
   m_shellProcess->start("powershell", QStringList());
 #else
   m_shellProcess->start("bash", QStringList{"--norc", "--noprofile"});
 #endif
 
-  // Editor screen settings
+  // --- Final Window Setup ---
+  m_mainSplitter->addWidget(m_fileTree);
+  m_mainSplitter->addWidget(m_editorSplitter);
+  m_mainSplitter->setStretchFactor(0, 0.5); // Tree takes less space
+  m_mainSplitter->setStretchFactor(1, 9.5); // Editor takes most space
+
+  m_editorSplitter->addWidget(m_EditorSpace);
+  m_editorSplitter->addWidget(m_consoleWidget);
+  m_editorSplitter->setStretchFactor(0, 8);
+  m_editorSplitter->setStretchFactor(1, 0.1); // Console is small by default
+
+  // --- Menu Bar & Shortcuts ---
+  QMenu *fileMenu = menuBar()->addMenu("File");
+
+  QAction *openFileAction = fileMenu->addAction("Open");
+  openFileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
+  connect(openFileAction, &QAction::triggered, this, &MainWindow::onOpenFile);
+
+  QAction *saveFileAction = fileMenu->addAction("Save");
+  saveFileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+  connect(saveFileAction, &QAction::triggered, this,
+          &MainWindow::saveCurrentCode);
+
+  QAction *saveFileActionAs = fileMenu->addAction("Save as");
+  saveFileActionAs->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+  connect(saveFileActionAs, &QAction::triggered, this, &MainWindow::saveCodeAs);
+
   setCentralWidget(m_mainSplitter);
-  resize(1920, 1080); // FHD (1280 x 720 for HD)
+  resize(1920, 1080);
   setWindowTitle("RawCodEt - Monaco Editor");
 }
 
 void MainWindow::setupConnects() {
-  // File tree double click options
+  // --- File Tree Interactions ---
   connect(m_fileTree, &QTreeWidget::itemDoubleClicked, this,
           [this](QTreeWidgetItem *item, int) {
             QString path = item->data(0, Qt::UserRole).toString();
             QFileInfo fileInfo(path);
 
+            // Handle "Go Up" directory logic
             if (path == "UP_DIRECTORY") {
               QDir dir(m_currentPath);
               if (dir.cdUp()) {
@@ -172,6 +164,7 @@ void MainWindow::setupConnects() {
               return;
             }
 
+            // Open file or navigate into directory
             if (fileInfo.isFile()) {
               loadLocalFile(path);
             } else if (fileInfo.isDir()) {
@@ -180,7 +173,8 @@ void MainWindow::setupConnects() {
             }
           });
 
-  // Check for code modified
+  // --- Monaco Editor "Dirty" State Tracking ---
+  // We use the HTML document title to pass state changes from JS to C++
   connect(m_EditorSpace->page(), &QWebEnginePage::titleChanged, this,
           [this](const QString &title) {
             if (!m_monacoReady)
@@ -199,30 +193,33 @@ void MainWindow::setupConnects() {
             }
           });
 
-  // Connect to host
+  // --- Network Socket Events ---
   connect(m_sock, &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
   connect(m_sock, &QTcpSocket::connected, this,
           [this]() { m_console->append("Connected"); });
   connect(m_sock, &QTcpSocket::disconnected, this,
           [this]() { m_console->append("Disconnected"); });
+
+  // Connect button clicked in the status bar menu
   connect(m_connectBtnAction, &QAction::triggered, this, [this]() {
     QString host = m_hostEdit->text();
     quint16 port = m_portSpin->value();
     m_console->append("Connecting to " + host + ":" + QString::number(port) +
-                    "...");
+                      "...");
     m_sock->connectToHost(host, port);
   });
 
-  // Shell command input
+  // --- Local Shell Output ---
   connect(m_shellProcess, &QProcess::readyReadStandardOutput, this, [this]() {
     m_console->insertPlainText(
         QString::fromUtf8(m_shellProcess->readAllStandardOutput()));
+    // Auto-scroll to bottom
     QTextCursor c = m_console->textCursor();
     c.movePosition(QTextCursor::End);
     m_console->setTextCursor(c);
   });
 
-  // Terminate shell
+  // Handle shell termination
   connect(m_shellProcess,
           QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
           [this](int, QProcess::ExitStatus) {
@@ -230,27 +227,19 @@ void MainWindow::setupConnects() {
           });
 }
 
-// Update file tree in sidebar
 void MainWindow::updateFileTree() {
   m_fileTree->clear();
-
   if (m_currentPath.isEmpty()) {
     m_currentPath = QDir::currentPath();
   }
-
   loadDirectoryForFileTree(m_currentPath, nullptr);
-
-  // m_fileTree->expandAll();
 }
 
-// Load directori from path
-void MainWindow::loadDirectoryForFileTree(const QString &path, QTreeWidgetItem *parent) {
+void MainWindow::loadDirectoryForFileTree(const QString &path,
+                                          QTreeWidgetItem *parent) {
   QDir dir(path);
 
-  // QStringList filters;
-  // filters << "*.cpp" << "*.h" << "*.ui" << "*.pro" << "*.html" << "*.js" <<
-  // "*.css";
-
+  // Add ".." item to navigate up, but only if we are not at the root/home
   if (parent == nullptr && m_currentPath != QDir::homePath() &&
       m_currentPath.startsWith(QDir::homePath())) {
     QTreeWidgetItem *upItem = new QTreeWidgetItem(m_fileTree);
@@ -258,69 +247,64 @@ void MainWindow::loadDirectoryForFileTree(const QString &path, QTreeWidgetItem *
     upItem->setData(0, Qt::UserRole, "UP_DIRECTORY");
   }
 
+  // Load files
   QFileInfoList fileList = dir.entryInfoList(QDir::Files);
-  // or (filters, QDir::Files)
   for (const QFileInfo &fileInfo : fileList) {
-    QTreeWidgetItem *item;
-    if (parent) {
-      item = new QTreeWidgetItem(parent);
-    } else {
-      item = new QTreeWidgetItem(m_fileTree);
-    }
+    QTreeWidgetItem *item =
+        parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_fileTree);
     item->setText(0, fileInfo.fileName());
     item->setData(0, Qt::UserRole, fileInfo.absoluteFilePath());
   }
 
+  // Load directories recursively (skip hidden and build folders)
   QFileInfoList dirList = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
   for (const QFileInfo &dirInfo : dirList) {
     if (dirInfo.fileName().startsWith(".") || dirInfo.fileName() == "build")
       continue;
 
-    QTreeWidgetItem *dirItem;
-    if (parent) {
-      dirItem = new QTreeWidgetItem(parent);
-    } else {
-      dirItem = new QTreeWidgetItem(m_fileTree);
-    }
+    QTreeWidgetItem *dirItem =
+        parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_fileTree);
     dirItem->setText(0, dirInfo.fileName());
     dirItem->setData(0, Qt::UserRole, dirInfo.absoluteFilePath());
 
+    // Recursive call
     loadDirectoryForFileTree(dirInfo.absoluteFilePath(), dirItem);
   }
 }
 
-// Set window title text
 void MainWindow::updateWindowTitle() {
   QString title = "RawCodEt";
-  if (!m_currentFilePath.isEmpty() && m_currentFilePath != "") {
+  if (!m_currentFilePath.isEmpty()) {
     title += " - " + QFileInfo(m_currentFilePath).fileName();
   }
+  // Append asterisk if there are unsaved changes
   if (m_codeModifiedFlag) {
     title += " *";
   }
   setWindowTitle(title);
 }
 
-// Tool for load JScode
 void MainWindow::runJS(const QString &js,
                        std::function<void(const QVariant &)> callback) {
   if (callback) {
+    // Asynchronous execution with a callback
     m_EditorSpace->page()->runJavaScript(
         js, [callback](const QVariant &result) { callback(result); });
   } else {
+    // Fire-and-forget execution
     m_EditorSpace->page()->runJavaScript(js);
   }
 }
 
-// Check changes in code while close
 void MainWindow::closeEvent(QCloseEvent *event) {
+  // Gracefully terminate the local shell process
   if (m_shellProcess && m_shellProcess->state() == QProcess::Running) {
     m_shellProcess->terminate();
     m_shellProcess->waitForFinished(1000);
   }
 
+  // Prompt user if there are unsaved changes in the editor
   if (m_codeModifiedFlag) {
-
     auto result = QMessageBox::question(
         this, "Unsaved changes",
         "File has unsaved changes. Save before closing?",
@@ -332,14 +316,13 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     } else if (result == QMessageBox::Discard) {
       event->accept();
     } else {
-      event->ignore();
+      event->ignore(); // Cancel closing
     }
-
   } else {
     event->accept();
   }
 }
 
 MainWindow::~MainWindow() {
-  // delete ui;
+  // Cleanup is handled by Qt's parent-child memory management
 }
