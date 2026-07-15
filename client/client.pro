@@ -9,7 +9,9 @@ QT += core gui network
 
 SOURCES += \
     main.cpp \
-    mainwindow.cpp
+    mainwindow.cpp\
+    file_tools.cpp\
+    console.cpp
 
 HEADERS += \
     mainwindow.h
