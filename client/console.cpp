@@ -42,7 +42,16 @@ void MainWindow::onReadyRead() {
 
   // Process all fully received messages in the buffer
   while (Message::tryDeserialize(m_buffer, msg)) {
-    if (msg.flag == "load") {
+    if (msg.flag == "auth_result") {
+      if (msg.payload["ok"].toBool()) {
+        QString login = msg.payload["login"].toString();
+        m_console->append("Authenticated as: " +
+                        login.toHtmlEscaped());
+      } else {
+        m_console->append("Auth failed: " +
+                        msg.payload["message"].toString().toHtmlEscaped());
+      }
+    } else if (msg.flag == "load") {
       if (msg.payload["ok"].toBool()) {
         QString remotePath = msg.payload["path"].toString();
         QString fileName = QFileInfo(remotePath).fileName();
@@ -126,7 +135,12 @@ void MainWindow::handleNetworkCommand(const QString &cmd) {
   bool sendMsg = false;
 
   // --- File & Compilation Commands ---
-  if (command == "ls" && parts.size() >= 2) {
+  if (command == "auth" && parts.size() >= 3) {
+    msg.flag = "auth";
+    msg.payload["login"] = parts[1];
+    msg.payload["password"] = parts[2];
+    sendMsg = true;
+  } else if (command == "ls" && parts.size() >= 2) {
     msg.flag = "ls";
     msg.payload["path"] = parts[1];
     sendMsg = true;
@@ -141,14 +155,15 @@ void MainWindow::handleNetworkCommand(const QString &cmd) {
     sendMsg = true;
   } else if (command == "compile" && parts.size() >= 2) {
     msg.flag = "compile";
-    msg.payload["path"] = parts[1];
-    msg.payload["code"] = getCode();
+    QString fullCommand = cmd.mid(8).trimmed();
+    msg.payload["command"] = fullCommand;
     sendMsg = true;
   } else if (command == "run" && parts.size() >= 2) {
     msg.flag = "run";
     msg.payload["path"] = parts[1];
     sendMsg = true;
   }
+
   // --- Connection Management ---
   else if (command == "connect") {
     if (m_sock->state() == QAbstractSocket::ConnectedState) {
