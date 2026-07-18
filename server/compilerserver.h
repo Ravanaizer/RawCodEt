@@ -1,15 +1,24 @@
 #pragma once
 
-#include "message.h"
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMap>
 #include <QProcess>
 #include <QTcpServer>
 #include <QTcpSocket>
+
+#include "message.h"
+
+struct UserInfo {
+  QString login;
+  QString password;
+};
 
 // Remote compilation server
 class CompilerServer : public QTcpServer {
@@ -31,6 +40,11 @@ private:
   void handle(QTcpSocket *sock, const Message &msg);
   void send(QTcpSocket *sock, const Message &msg);
 
+  // Session management
+  QString getUserDir(QTcpSocket *sock) const;
+  void createSession(QTcpSocket *sock, const QString &login);
+  void destroySession(QTcpSocket *sock);
+
   // --- Security Layer ---
   // Validate path and check extension if needed
   QString validatePath(QTcpSocket *sock, const QString &path, Message &reply,
@@ -42,6 +56,11 @@ private:
   // Check if file extension is allowed
   bool isAllowedExtension(const QString &path) const;
 
+  // Auth
+  void loadUsers();
+  void handleAuth(QTcpSocket *sock, const Message &msg);
+  bool checkCredentials(const QString &login, const QString &password) const;
+
   // --- Command Handlers ---
   void handleLoad(QTcpSocket *sock, const Message &msg);
   void handleSave(QTcpSocket *sock, const Message &msg);
@@ -52,4 +71,8 @@ private:
   // --- Member Variables ---
   QMap<QTcpSocket *, QByteArray> m_buffers;
   QString m_sandboxDir;
+
+  QMap<QTcpSocket *, QString> m_userDirs;   // sock -> user workspace path
+  QMap<QTcpSocket *, QString> m_userLogins; // sock -> login
+  QList<UserInfo> m_users;
 };
