@@ -28,6 +28,7 @@ void MainWindow::setupUI() {
   settings->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls,
                          true);
   settings->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
+  m_EditorSpace->page()->setBackgroundColor(QColor("#1E1F22"));
 
   // Load the HTML file that initializes Monaco Editor
   QString editorHtmlPath =
@@ -108,7 +109,7 @@ void MainWindow::setupUI() {
       QProcess::MergedChannels); // Merge stderr and stdout
   m_shellProcess->setWorkingDirectory(m_currentPath);
 
-  // Start appropriate shell based on OS
+// Start appropriate shell based on OS
 #ifdef Q_OS_WIN
   m_shellProcess->start("powershell", QStringList());
 #else
@@ -129,18 +130,62 @@ void MainWindow::setupUI() {
   // --- Menu Bar & Shortcuts ---
   QMenu *fileMenu = menuBar()->addMenu("File");
 
+  // Open
   QAction *openFileAction = fileMenu->addAction("Open");
   openFileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
   connect(openFileAction, &QAction::triggered, this, &MainWindow::onOpenFile);
 
+  // Save
   QAction *saveFileAction = fileMenu->addAction("Save");
   saveFileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
   connect(saveFileAction, &QAction::triggered, this,
           &MainWindow::saveCurrentCode);
 
+  // Save as
   QAction *saveFileActionAs = fileMenu->addAction("Save as");
   saveFileActionAs->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
   connect(saveFileActionAs, &QAction::triggered, this, &MainWindow::saveCodeAs);
+
+  // --- Network Menu ---
+  QMenu *networkMenu = menuBar()->addMenu("Network");
+
+  // Connect
+  m_connectAction = networkMenu->addAction("Connect");
+  m_connectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
+
+  // Disconnect
+  m_disconnectAction = networkMenu->addAction("Disconnect");
+  m_disconnectAction->setEnabled(false);
+
+  networkMenu->addSeparator();
+
+  // Load from server
+  m_remoteLoadAction = networkMenu->addAction("Load from Server...");
+  m_remoteLoadAction->setShortcut(
+      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+  m_remoteLoadAction->setEnabled(false);
+
+  // Save to server
+  m_remoteSaveAction = networkMenu->addAction("Save to Server...");
+  m_remoteSaveAction->setShortcut(
+      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+  m_remoteSaveAction->setEnabled(false);
+
+  // List remote directory
+  m_remoteListAction = networkMenu->addAction("List Remote Directory...");
+  m_remoteListAction->setEnabled(false);
+
+  networkMenu->addSeparator();
+
+  // Compile
+  m_compileAction = networkMenu->addAction("Compile...");
+  m_compileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
+  m_compileAction->setEnabled(false);
+
+  // Run
+  m_runAction = networkMenu->addAction("Run...");
+  m_runAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F5));
+  m_runAction->setEnabled(false);
 
   setCentralWidget(m_mainSplitter);
   resize(1920, 1080);
@@ -193,13 +238,6 @@ void MainWindow::setupConnects() {
             }
           });
 
-  // --- Network Socket Events ---
-  connect(m_sock, &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
-  connect(m_sock, &QTcpSocket::connected, this,
-          [this]() { m_console->append("Connected"); });
-  connect(m_sock, &QTcpSocket::disconnected, this,
-          [this]() { m_console->append("Disconnected"); });
-
   // Connect button clicked in the status bar menu
   connect(m_connectBtnAction, &QAction::triggered, this, [this]() {
     QString host = m_hostEdit->text();
@@ -225,6 +263,111 @@ void MainWindow::setupConnects() {
           [this](int, QProcess::ExitStatus) {
             m_console->append("\n[Shell terminated]");
           });
+
+  // --- Network Menu Connections ---
+  // Connect
+  connect(m_connectAction, &QAction::triggered, this, [this]() {
+    QString host = m_hostEdit->text();
+    quint16 port = m_portSpin->value();
+    m_console->append("Connecting to " + host + ":" + QString::number(port) +
+                      "...");
+    m_sock->connectToHost(host, port);
+  });
+
+  // Disconnect
+  connect(m_disconnectAction, &QAction::triggered, this, [this]() {
+    m_console->append("Disconnecting...");
+    if (m_sock->state() != QAbstractSocket::ConnectedState) {
+      m_console->append("Already disconnected");
+      return;
+    }
+    m_sock->disconnectFromHost();
+  });
+
+  // Load from server
+  connect(m_remoteLoadAction, &QAction::triggered, this, [this]() {
+    bool ok;
+    QString path = QInputDialog::getText(
+        this, "Remote Load", "Enter file path on server:", QLineEdit::Normal,
+        "./test.cpp", &ok);
+    if (ok && !path.isEmpty()) {
+      onRemoteLoad(path);
+    }
+  });
+
+  // Save to server
+  connect(m_remoteSaveAction, &QAction::triggered, this, [this]() {
+    bool ok;
+    QString path = QInputDialog::getText(
+        this, "Remote Save", "Enter file path on server:", QLineEdit::Normal,
+        "./test.cpp", &ok);
+    if (ok && !path.isEmpty()) {
+      onRemoteSave(path);
+    }
+  });
+
+  // List remote directory
+  connect(m_remoteListAction, &QAction::triggered, this, [this]() {
+    bool ok;
+    QString path = QInputDialog::getText(
+        this, "Remote List", "Enter directory path:", QLineEdit::Normal, ".",
+        &ok);
+    if (ok && !path.isEmpty()) {
+      remoteGetDirs(path);
+    }
+  });
+
+  // Compile
+  connect(m_compileAction, &QAction::triggered, this, [this]() {
+    bool ok;
+    QString path = QInputDialog::getText(
+        this, "Compile", "Enter source file path:", QLineEdit::Normal,
+        "./test.cpp", &ok);
+    if (ok && !path.isEmpty()) {
+      Message msg;
+      msg.flag = "compile";
+      msg.payload["path"] = path;
+      msg.payload["code"] = getCode();
+      send(msg);
+    }
+  });
+
+  // Run
+  connect(m_runAction, &QAction::triggered, this, [this]() {
+    bool ok;
+    QString path = QInputDialog::getText(
+        this, "Run", "Enter binary path:", QLineEdit::Normal, "./test.cpp.out",
+        &ok);
+    if (ok && !path.isEmpty()) {
+      Message msg;
+      msg.flag = "run";
+      msg.payload["path"] = path;
+      send(msg);
+    }
+  });
+
+  // --- Network Socket Events ---
+  connect(m_sock, &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
+  connect(m_sock, &QTcpSocket::connected, this, [this]() {
+    m_console->append("Connected");
+    m_connectAction->setEnabled(false);
+    m_disconnectAction->setEnabled(true);
+    m_remoteLoadAction->setEnabled(true);
+    m_remoteSaveAction->setEnabled(true);
+    m_remoteListAction->setEnabled(true);
+    m_compileAction->setEnabled(true);
+    m_runAction->setEnabled(true);
+  });
+  connect(m_sock, &QTcpSocket::disconnected, this, [this]() {
+    m_console->append("Disconnected");
+    m_connectAction->setEnabled(true);
+    m_disconnectAction->setEnabled(false);
+    m_remoteLoadAction->setEnabled(false);
+    m_remoteSaveAction->setEnabled(false);
+    m_remoteListAction->setEnabled(false);
+    m_compileAction->setEnabled(false);
+    m_runAction->setEnabled(false);
+  });
 }
 
 void MainWindow::updateFileTree() {
@@ -247,15 +390,6 @@ void MainWindow::loadDirectoryForFileTree(const QString &path,
     upItem->setData(0, Qt::UserRole, "UP_DIRECTORY");
   }
 
-  // Load files
-  QFileInfoList fileList = dir.entryInfoList(QDir::Files);
-  for (const QFileInfo &fileInfo : fileList) {
-    QTreeWidgetItem *item =
-        parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_fileTree);
-    item->setText(0, fileInfo.fileName());
-    item->setData(0, Qt::UserRole, fileInfo.absoluteFilePath());
-  }
-
   // Load directories recursively (skip hidden and build folders)
   QFileInfoList dirList = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
   for (const QFileInfo &dirInfo : dirList) {
@@ -264,11 +398,20 @@ void MainWindow::loadDirectoryForFileTree(const QString &path,
 
     QTreeWidgetItem *dirItem =
         parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_fileTree);
-    dirItem->setText(0, dirInfo.fileName());
+    dirItem->setText(0, dirInfo.fileName() + "/");
     dirItem->setData(0, Qt::UserRole, dirInfo.absoluteFilePath());
 
     // Recursive call
     loadDirectoryForFileTree(dirInfo.absoluteFilePath(), dirItem);
+  }
+
+  // Load files
+  QFileInfoList fileList = dir.entryInfoList(QDir::Files);
+  for (const QFileInfo &fileInfo : fileList) {
+    QTreeWidgetItem *item =
+        parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_fileTree);
+    item->setText(0, fileInfo.fileName());
+    item->setData(0, Qt::UserRole, fileInfo.absoluteFilePath());
   }
 }
 

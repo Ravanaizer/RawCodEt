@@ -6,6 +6,7 @@ add_executable(client
   # file_tools.h
   console.cpp
   # console.h
+  theme.h
 )
 
 target_link_libraries(client PRIVATE

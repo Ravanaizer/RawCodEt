@@ -36,6 +36,7 @@
 #include <QWebEngineSettings>
 #include <QWebEngineView>
 #include <QWidgetAction>
+#include <QInputDialog>
 
 // Forward declarations to reduce compilation time
 class QWebEngineView;
@@ -137,6 +138,15 @@ private:
   QAction          *m_connectBtnAction;
   QTcpSocket       *m_sock;
   QByteArray       m_buffer; // Buffer for accumulating partial TCP messages
+
+  // Network menu actions
+  QAction *m_connectAction;
+  QAction *m_disconnectAction;
+  QAction *m_remoteLoadAction;
+  QAction *m_remoteSaveAction;
+  QAction *m_remoteListAction;
+  QAction *m_compileAction;
+  QAction *m_runAction;
 
 protected:
   void closeEvent(QCloseEvent *event) override;
