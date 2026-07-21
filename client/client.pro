@@ -14,7 +14,8 @@ SOURCES += \
     console.cpp
 
 HEADERS += \
-    mainwindow.h
+    mainwindow.h\
+    theme.h
 
 
 INCLUDEPATH += $$PWD/../protocol
